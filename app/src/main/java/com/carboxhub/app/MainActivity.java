@@ -2,10 +2,12 @@ package com.carboxhub.app;
 
 import android.app.Activity;
 import android.app.Dialog;
+import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -31,7 +33,17 @@ public final class MainActivity extends Activity {
     private final TextView[] digits = new TextView[6];
     private String lastUrl = "";
     private boolean renderedWebEnabled;
+    private boolean configReceiverRegistered;
     private final Handler handler = new Handler(Looper.getMainLooper());
+
+    private final BroadcastReceiver configReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (intent == null || !AppConfig.ACTION_CONFIG_CHANGED.equals(intent.getAction())) return;
+            setContentView(buildUi());
+            refresh();
+        }
+    };
+
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
             refresh();
@@ -46,6 +58,14 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i); else startService(i);
     }
 
+    @Override protected void onStart() {
+        super.onStart();
+        if (!configReceiverRegistered) {
+            registerReceiver(configReceiver, new IntentFilter(AppConfig.ACTION_CONFIG_CHANGED));
+            configReceiverRegistered = true;
+        }
+    }
+
     @Override protected void onResume() {
         super.onResume();
         handler.removeCallbacks(ticker);
@@ -56,6 +76,14 @@ public final class MainActivity extends Activity {
     @Override protected void onPause() {
         handler.removeCallbacks(ticker);
         super.onPause();
+    }
+
+    @Override protected void onStop() {
+        if (configReceiverRegistered) {
+            try { unregisterReceiver(configReceiver); } catch (Throwable ignored) {}
+            configReceiverRegistered = false;
+        }
+        super.onStop();
     }
 
     private View buildUi() {
@@ -226,8 +254,6 @@ public final class MainActivity extends Activity {
     private void enableWebService() {
         AppConfig.setWebEnabled(this, true);
         LanServerService.requestApplyWebState(this);
-        setContentView(buildUi());
-        refresh();
         toast("Web 服务已开启");
     }
 
