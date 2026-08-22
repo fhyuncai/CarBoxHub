@@ -3,6 +3,7 @@ package com.carboxhub.app;
 import android.app.Notification;
 import android.content.ComponentName;
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
@@ -12,6 +13,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.service.notification.StatusBarNotification;
 import android.text.TextUtils;
+import android.util.Base64;
+
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -24,7 +28,11 @@ public final class MediaCaptureEngine {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ArrayList<MediaController> controllers = new ArrayList<>();
     private Context app; private MediaSessionManager manager; private MediaSessionCarSink sink;
-    private volatile NowPlaying now = new NowPlaying(); private volatile String lastError = ""; private boolean started;
+    private volatile NowPlaying now = new NowPlaying();
+    private volatile String lastError = "";
+    private volatile String artworkDataUrl = "";
+    private volatile long artworkKey = 0L;
+    private boolean started;
     private final MediaSessionManager.OnActiveSessionsChangedListener activeListener = new MediaSessionManager.OnActiveSessionsChangedListener() { @Override public void onActiveSessionsChanged(List<MediaController> list) { bindControllers(list); } };
     private final MediaController.Callback controllerCallback = new MediaController.Callback() { @Override public void onMetadataChanged(MediaMetadata metadata) { refreshFromBound(); } @Override public void onPlaybackStateChanged(PlaybackState state) { refreshFromBound(); } };
     private MediaCaptureEngine() {}
@@ -38,7 +46,15 @@ public final class MediaCaptureEngine {
         catch (Throwable t) { lastError = t.toString(); }
         started = true;
     }
-    public synchronized void stop() { if (!started) return; try { manager.removeOnActiveSessionsChangedListener(activeListener); } catch (Throwable ignored) {} clearControllers(); if (sink != null) sink.stop(); started = false; }
+    public synchronized void stop() {
+        if (!started) return;
+        try { manager.removeOnActiveSessionsChangedListener(activeListener); } catch (Throwable ignored) {}
+        clearControllers();
+        if (sink != null) sink.stop();
+        artworkDataUrl = "";
+        artworkKey = 0L;
+        started = false;
+    }
     public synchronized void notificationListenerConnected(Context c) { if (!started) start(c); refreshSessions(); }
     public synchronized void refreshSessions() { if (app == null) return; try { ComponentName listener = new ComponentName(app, MediaNotificationListener.class); bindControllers(manager.getActiveSessions(listener)); lastError = ""; } catch (Throwable t) { lastError = t.toString(); } }
     public void onNotification(StatusBarNotification sbn) {
@@ -53,14 +69,52 @@ public final class MediaCaptureEngine {
     private void refreshFromBound() {
         MediaController c; synchronized (this) { c = bestController(); } if (c == null) return;
         NowPlaying x = new NowPlaying(); x.sourcePackage = c.getPackageName(); MediaMetadata m = c.getMetadata();
-        if (m != null) { x.title = str(m, MediaMetadata.METADATA_KEY_TITLE); if (TextUtils.isEmpty(x.title)) x.title = str(m, MediaMetadata.METADATA_KEY_DISPLAY_TITLE); x.artist = str(m, MediaMetadata.METADATA_KEY_ARTIST); if (TextUtils.isEmpty(x.artist)) x.artist = str(m, MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE); x.album = str(m, MediaMetadata.METADATA_KEY_ALBUM); x.durationMs = m.getLong(MediaMetadata.METADATA_KEY_DURATION); }
+        if (m != null) {
+            x.title = str(m, MediaMetadata.METADATA_KEY_TITLE); if (TextUtils.isEmpty(x.title)) x.title = str(m, MediaMetadata.METADATA_KEY_DISPLAY_TITLE);
+            x.artist = str(m, MediaMetadata.METADATA_KEY_ARTIST); if (TextUtils.isEmpty(x.artist)) x.artist = str(m, MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE);
+            x.album = str(m, MediaMetadata.METADATA_KEY_ALBUM);
+            x.durationMs = m.getLong(MediaMetadata.METADATA_KEY_DURATION);
+            updateArtwork(m);
+        }
         PlaybackState s = c.getPlaybackState(); if (s != null) { x.positionMs = s.getPosition(); x.playing = s.getState() == PlaybackState.STATE_PLAYING || s.getState() == PlaybackState.STATE_BUFFERING; }
         x.updatedAt = System.currentTimeMillis(); publish(x, c);
+    }
+    private void updateArtwork(MediaMetadata m) {
+        try {
+            Bitmap art = m.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART);
+            if (art == null) art = m.getBitmap(MediaMetadata.METADATA_KEY_ART);
+            if (art == null) art = m.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON);
+            if (art == null) {
+                artworkDataUrl = "";
+                artworkKey = 0L;
+                return;
+            }
+            long key = (((long) art.getGenerationId()) << 32) ^ (((long) art.getWidth()) << 16) ^ art.getHeight();
+            if (key == artworkKey && !TextUtils.isEmpty(artworkDataUrl)) return;
+
+            Bitmap output = art;
+            int maxSide = 256;
+            int w = art.getWidth();
+            int h = art.getHeight();
+            if (w > maxSide || h > maxSide) {
+                float scale = Math.min((float) maxSide / (float) w, (float) maxSide / (float) h);
+                output = Bitmap.createScaledBitmap(art, Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)), true);
+            }
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream(32 * 1024);
+            output.compress(Bitmap.CompressFormat.JPEG, 82, bytes);
+            if (output != art) output.recycle();
+            artworkDataUrl = "data:image/jpeg;base64," + Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP);
+            artworkKey = key;
+        } catch (Throwable ignored) {
+            artworkDataUrl = "";
+            artworkKey = 0L;
+        }
     }
     private static String str(MediaMetadata m, String key) { String s = m.getString(key); return s == null ? "" : s; }
     private synchronized NowPlaying cloneNow() { NowPlaying x = new NowPlaying(); x.sourcePackage = now.sourcePackage; x.title = now.title; x.artist = now.artist; x.album = now.album; x.durationMs = now.durationMs; x.positionMs = now.positionMs; x.playing = now.playing; x.updatedAt = now.updatedAt; return x; }
     private void publish(NowPlaying x, MediaController source) { now = x; MediaSessionCarSink s = sink; if (s != null) s.publish(x, source); }
     public NowPlaying current() { return cloneNow(); }
+    public String artworkDataUrl() { return artworkDataUrl; }
     public String lastError() { return lastError; }
     public boolean isStarted() { return started; }
 }
