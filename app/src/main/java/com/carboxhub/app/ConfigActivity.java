@@ -137,6 +137,21 @@ public final class ConfigActivity extends Activity {
                 checked -> AppConfig.setAutoStart(this, checked)
         );
 
+        section("CarPlay 桥接诊断");
+        infoRow("桥接程序", BridgeDiagnostics.summary(this));
+        actionRow(
+                "生成诊断报告",
+                "收集桥接包、当前 MediaSession；有 Root 时附加 dumpsys 与日志",
+                "生成",
+                v -> generateBridgeDiagnostic()
+        );
+        actionRow(
+                "导出桥接 APK",
+                "把检测到的 Car Link / ZLink / TLink 安装包导出到 Web 文件目录",
+                "导出",
+                v -> exportBridgeApk()
+        );
+
         section("状态");
         String rootState = AppConfig.rootInstall(this) ? (RootShell.isAvailable() ? "可用" : "无 / 未授权") : "未启用";
         infoRow("Root", rootState);
@@ -145,6 +160,34 @@ public final class ConfigActivity extends Activity {
         NowPlaying now = MediaCaptureEngine.get().current();
         String media = now.title.isEmpty() ? "暂无媒体" : now.title + (now.artist.isEmpty() ? "" : " · " + now.artist);
         infoRow("当前媒体", media);
+    }
+
+    private void generateBridgeDiagnostic() {
+        toast("正在收集 CarPlay 诊断信息...");
+        new Thread(() -> {
+            BridgeDiagnostics.Result result = BridgeDiagnostics.capture(getApplicationContext());
+            runOnUiThread(() -> {
+                if (result.ok && result.file != null) {
+                    toast("已生成：" + result.file.getName() + "，可从 Web 文件管理下载");
+                } else {
+                    toast("诊断失败：" + result.message);
+                }
+            });
+        }, "CarBoxHub-bridge-diagnostic").start();
+    }
+
+    private void exportBridgeApk() {
+        toast("正在导出 CarPlay 桥接 APK...");
+        new Thread(() -> {
+            BridgeDiagnostics.Result result = BridgeDiagnostics.exportPrimaryApk(getApplicationContext());
+            runOnUiThread(() -> {
+                if (result.ok && result.file != null) {
+                    toast("已导出：" + result.file.getName() + "，可从 Web 文件管理下载");
+                } else {
+                    toast(result.message);
+                }
+            });
+        }, "CarBoxHub-bridge-export").start();
     }
 
     private void section(String title) {
@@ -260,7 +303,7 @@ public final class ConfigActivity extends Activity {
     }
 
     private void toast(String s) {
-        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, s, Toast.LENGTH_LONG).show();
     }
 
     private int dp(int v) {
