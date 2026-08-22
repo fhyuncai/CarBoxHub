@@ -12,6 +12,7 @@ public final class AppConfig {
     private static final String K_ROOT_INSTALL = "root_install";
     private static final String K_AUTOSTART = "autostart";
     private static final String K_NETEASE = "plugin_netease";
+    private static final SecureRandom RNG = new SecureRandom();
 
     private AppConfig() {}
 
@@ -21,14 +22,16 @@ public final class AppConfig {
 
     public static String token(Context c) {
         String token = p(c).getString(K_TOKEN, "");
-        if (token == null || token.length() < 12) {
-            byte[] b = new byte[12];
-            new SecureRandom().nextBytes(b);
-            StringBuilder sb = new StringBuilder();
-            for (byte x : b) sb.append(String.format("%02x", x & 0xff));
-            token = sb.toString();
+        if (!isSixDigitToken(token)) {
+            token = generateSixDigitToken();
             p(c).edit().putString(K_TOKEN, token).apply();
         }
+        return token;
+    }
+
+    public static String regenerateToken(Context c) {
+        String token = generateSixDigitToken();
+        p(c).edit().putString(K_TOKEN, token).apply();
         return token;
     }
 
@@ -39,4 +42,13 @@ public final class AppConfig {
     public static void setAutoStart(Context c, boolean v) { p(c).edit().putBoolean(K_AUTOSTART, v).apply(); }
     public static boolean neteaseEnabled(Context c) { return p(c).getBoolean(K_NETEASE, true); }
     public static void setNeteaseEnabled(Context c, boolean v) { p(c).edit().putBoolean(K_NETEASE, v).apply(); }
+
+    private static boolean isSixDigitToken(String token) {
+        return token != null && token.matches("\\d{6}");
+    }
+
+    private static String generateSixDigitToken() {
+        int value = RNG.nextInt(1_000_000);
+        return String.format("%06d", value);
+    }
 }

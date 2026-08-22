@@ -1,11 +1,14 @@
-name: Build Android Release
+name: Android CI & Release
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -15,7 +18,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -25,23 +28,63 @@ jobs:
         with:
           gradle-version: '8.2.1'
 
-      - name: Build unsigned Release APK
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(grep "versionName '" app/build.gradle | sed -E "s/.*versionName '([^']+)'.*/\1/")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release signing files
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ] || [ -z "${{ secrets.RELEASE_STORE_PASSWORD }}" ] || [ -z "${{ secrets.RELEASE_KEY_ALIAS }}" ] || [ -z "${{ secrets.RELEASE_KEY_PASSWORD }}" ]; then
+            echo "::error::Missing signing secrets"
+            exit 1
+          fi
+          mkdir -p keystore
+          echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > keystore/CarBoxHub-release.jks
+          printf '%s\n' \
+            'storeFile=keystore/CarBoxHub-release.jks' \
+            'storePassword=${{ secrets.RELEASE_STORE_PASSWORD }}' \
+            'keyAlias=${{ secrets.RELEASE_KEY_ALIAS }}' \
+            'keyPassword=${{ secrets.RELEASE_KEY_PASSWORD }}' \
+            > keystore.properties
+
+      - name: Build signed Release APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Build unsigned CI APK
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         run: gradle :app:assembleRelease -PciUnsignedRelease=true --stacktrace
 
-      - name: Collect signing tools
+      - name: Package APK
+        id: pack
+        shell: bash
         run: |
-          mkdir -p ci-tools/lib
-          cp "$ANDROID_HOME/build-tools/34.0.0/apksigner" ci-tools/apksigner
-          cp "$ANDROID_HOME/build-tools/34.0.0/lib/apksigner.jar" ci-tools/lib/apksigner.jar
-          chmod +x ci-tools/apksigner
-          find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print
+          APK=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          test -n "$APK"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            OUT="CarBoxHub-v${{ steps.version.outputs.version }}.apk"
+          else
+            OUT="CarBoxHub-v${{ steps.version.outputs.version }}-unsigned.apk"
+          fi
+          cp "$APK" "$OUT"
+          echo "artifact_name=$OUT" >> "$GITHUB_OUTPUT"
 
-      - name: Upload unsigned APK and apksigner
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CarBoxHub-v0.1.1-unsigned
+          name: ${{ steps.pack.outputs.artifact_name }}
+          path: ${{ steps.pack.outputs.artifact_name }}
           if-no-files-found: error
-          path: |
-            app/build/outputs/apk/release/*.apk
-            ci-tools/apksigner
-            ci-tools/lib/apksigner.jar
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.pack.outputs.artifact_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
