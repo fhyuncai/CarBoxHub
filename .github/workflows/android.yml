@@ -1,0 +1,45 @@
+name: Build Android Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.2.1'
+
+      - name: Build unsigned Release APK
+        run: gradle :app:assembleRelease -PciUnsignedRelease=true --stacktrace
+
+      - name: Collect signing tools
+        run: |
+          mkdir -p ci-tools/lib
+          cp "$ANDROID_HOME/build-tools/34.0.0/apksigner" ci-tools/apksigner
+          cp "$ANDROID_HOME/build-tools/34.0.0/lib/apksigner.jar" ci-tools/lib/apksigner.jar
+          chmod +x ci-tools/apksigner
+          find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print
+
+      - name: Upload unsigned APK and apksigner
+        uses: actions/upload-artifact@v4
+        with:
+          name: CarBoxHub-v0.1.1-unsigned
+          if-no-files-found: error
+          path: |
+            app/build/outputs/apk/release/*.apk
+            ci-tools/apksigner
+            ci-tools/lib/apksigner.jar
