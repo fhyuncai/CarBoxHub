@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.IBinder;
 
@@ -33,7 +34,8 @@ public final class LanServerService extends Service {
         String text = "http://" + NetUtil.localIpv4() + ":" + AppConfig.port(this);
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, "service") : new Notification.Builder(this);
         return b
-                .setSmallIcon(R.drawable.ic_stat_carbox)
+                .setSmallIcon(R.mipmap.ic_notification)
+                .setLargeIcon(BitmapFactory.decodeResource(getResources(), R.mipmap.ic_notification))
                 .setColor(0xFF2563EB)
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setShowWhen(false)
