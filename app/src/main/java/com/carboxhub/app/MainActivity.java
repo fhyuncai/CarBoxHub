@@ -1,14 +1,16 @@
 package com.carboxhub.app;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -17,88 +19,189 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.CheckBox;
-import android.widget.LinearLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
 public final class MainActivity extends Activity {
-    private TextView status;
-    private TextView nowPlaying;
-    private CheckBox plugin;
-    private CheckBox rootInstall;
-    private CheckBox autoStart;
-    private ImageView qrView;
-    private TextView qrHint;
-    private String lastQrUrl = "";
-    private final Handler refreshHandler = new Handler(Looper.getMainLooper());
-    private final Runnable refreshTask = new Runnable() {
-        @Override public void run() { refresh(); refreshHandler.postDelayed(this, 2500); }
+    private TextView address;
+    private ImageView qr;
+    private final TextView[] digits = new TextView[6];
+    private String lastUrl = "";
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable ticker = new Runnable() {
+        @Override public void run() { refresh(); handler.postDelayed(this, 2500); }
     };
 
-    @Override protected void onCreate(Bundle b) { super.onCreate(b); setContentView(buildUi()); startLanService(); }
-    @Override protected void onResume() { super.onResume(); refreshHandler.removeCallbacks(refreshTask); refresh(); refreshHandler.postDelayed(refreshTask, 2500); }
-    @Override protected void onPause() { refreshHandler.removeCallbacks(refreshTask); super.onPause(); }
+    @Override protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        setContentView(buildUi());
+        Intent i = new Intent(this, LanServerService.class);
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(i); else startService(i);
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        handler.removeCallbacks(ticker);
+        refresh();
+        handler.postDelayed(ticker, 2500);
+    }
+
+    @Override protected void onPause() {
+        handler.removeCallbacks(ticker);
+        super.onPause();
+    }
 
     private View buildUi() {
-        ScrollView sc = new ScrollView(this);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(Color.rgb(7,13,25));
         LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(28), dp(22), dp(28), dp(22)); root.setBackgroundColor(Color.rgb(15,23,42)); sc.addView(root);
-        TextView title = text("CarBoxHub", 30, Color.WHITE); root.addView(title);
-        TextView sub = text("7862 车盒 · 局域网文件传送 / APK 安装 / 网易云媒体桥接", 15, Color.rgb(148,163,184)); root.addView(sub);
-        status = text("", 18, Color.WHITE); status.setPadding(0,dp(18),0,dp(12)); root.addView(status);
-        TextView qrTitle = text("手机扫码进入管理面板", 18, Color.WHITE); root.addView(qrTitle);
-        qrHint = text("二维码包含当前局域网地址和访问 Token · 点击二维码可放大", 14, Color.rgb(148,163,184)); qrHint.setPadding(0, dp(4), 0, dp(8)); root.addView(qrHint);
-        qrView = new ImageView(this); qrView.setBackgroundColor(Color.WHITE); qrView.setAdjustViewBounds(true); qrView.setScaleType(ImageView.ScaleType.CENTER);
-        LinearLayout.LayoutParams qrLp = new LinearLayout.LayoutParams(dp(240), dp(240)); qrLp.gravity = Gravity.CENTER_HORIZONTAL; qrLp.setMargins(0, 0, 0, dp(14)); qrView.setLayoutParams(qrLp); qrView.setContentDescription("CarBoxHub Web 管理面板二维码"); qrView.setOnClickListener(v -> showLargeQr()); root.addView(qrView);
-        LinearLayout buttons = new LinearLayout(this); buttons.setOrientation(LinearLayout.HORIZONTAL); root.addView(buttons);
-        Button copy = button("复制 Web 地址"); buttons.addView(copy); copy.setOnClickListener(v -> copyUrl());
-        Button notif = button("授予通知使用权"); buttons.addView(notif); notif.setOnClickListener(v -> startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")));
-        Button unknown = button("允许安装未知应用"); buttons.addView(unknown); unknown.setOnClickListener(v -> openUnknownSources());
-        Button storage = button("允许公共下载目录"); buttons.addView(storage); storage.setOnClickListener(v -> requestStorage());
-        plugin = check("启用：网易云媒体投送插件"); root.addView(plugin);
-        plugin.setOnCheckedChangeListener((v, checked) -> { AppConfig.setNeteaseEnabled(this, checked); if (checked) MediaCaptureEngine.get().start(this); else MediaCaptureEngine.get().stop(); refresh(); });
-        rootInstall = check("有 root 时优先静默安装 APK"); root.addView(rootInstall); rootInstall.setOnCheckedChangeListener((v, checked) -> AppConfig.setRootInstall(this, checked));
-        autoStart = check("开机自动启动 CarBoxHub"); root.addView(autoStart); autoStart.setOnCheckedChangeListener((v, checked) -> AppConfig.setAutoStart(this, checked));
-        TextView ptitle = text("当前网易云媒体", 18, Color.WHITE); ptitle.setPadding(0,dp(18),0,0); root.addView(ptitle);
-        nowPlaying = text("暂无", 20, Color.rgb(226,232,240)); root.addView(nowPlaying);
-        TextView note = text("说明：CarBoxHub 会把网易云车机版的 MediaSession/通知媒体信息复制到一个代理 MediaSession。若嘟嘟梁山车盒的 CarPlay 桥接层会读取 Android 当前媒体信息，原车机即可显示歌名/歌手/播放状态并回传上一曲、下一曲、播放/暂停。若厂商桥接层不读取标准 MediaSession，需要再针对其私有服务做适配。", 14, Color.rgb(148,163,184)); note.setPadding(0,dp(18),0,0); root.addView(note);
-        return sc;
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(Gravity.CENTER_HORIZONTAL);
+        root.setPadding(dp(42), dp(28), dp(42), dp(28));
+        scroll.addView(root);
+
+        TextView title = tv("CarBoxHub", 30, Color.WHITE);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        title.setOnLongClickListener(v -> { showSettings(); return true; });
+        root.addView(title);
+
+        LinearLayout addrCard = card("访问地址");
+        address = tv("等待连接局域网", 21, Color.WHITE);
+        address.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        address.setGravity(Gravity.CENTER);
+        address.setPadding(0, dp(10), 0, 0);
+        addrCard.addView(address);
+        addrCard.setOnClickListener(v -> copyUrl());
+        root.addView(addrCard, lpTop(22));
+
+        LinearLayout tokenCard = card("访问令牌");
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER);
+        row.setPadding(0, dp(14), 0, 0);
+        for (int n=0; n<6; n++) {
+            TextView d = tv("0", 28, Color.rgb(15,23,42));
+            d.setGravity(Gravity.CENTER);
+            d.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+            d.setBackground(codeBg());
+            digits[n] = d;
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(dp(54), dp(64));
+            if (n > 0) p.leftMargin = dp(12);
+            row.addView(d, p);
+        }
+        tokenCard.addView(row);
+        tokenCard.setOnClickListener(v -> copyToken());
+        root.addView(tokenCard, lpTop(16));
+
+        LinearLayout qrCard = card("扫码进入管理面板");
+        qrCard.setGravity(Gravity.CENTER_HORIZONTAL);
+        qr = new ImageView(this);
+        qr.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        qr.setPadding(dp(16), dp(16), dp(16), dp(16));
+        GradientDrawable white = new GradientDrawable();
+        white.setColor(Color.WHITE); white.setCornerRadius(dp(24));
+        qr.setBackground(white);
+        qr.setOnClickListener(v -> showQr());
+        LinearLayout.LayoutParams qp = new LinearLayout.LayoutParams(dp(280), dp(280));
+        qp.topMargin = dp(16);
+        qrCard.addView(qr, qp);
+        root.addView(qrCard, lpTop(16));
+        return scroll;
     }
 
-    private void startLanService() { Intent i = new Intent(this, LanServerService.class); if (Build.VERSION.SDK_INT >= 26) startForegroundService(i); else startService(i); }
     private void refresh() {
-        String ip = NetUtil.localIpv4(); String url = "http://" + ip + ":" + AppConfig.port(this) + "/?token=" + AppConfig.token(this); updateQr(url, ip);
-        boolean access = NeteaseMediaPlugin.hasNotificationAccess(this); boolean install = Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls();
-        status.setText("Web：" + url + "\n通知使用权：" + (access ? "已授权" : "未授权") + "    APK 安装权限：" + (install ? "可用" : "未允许") + "    Root：" + (AppConfig.rootInstall(this) ? (RootShell.isAvailable() ? "可用" : "无/未授权") : "未启用") + "\n文件目录：" + StorageUtil.uploadDir(this).getAbsolutePath());
-        setCheck(plugin, AppConfig.neteaseEnabled(this)); setCheck(rootInstall, AppConfig.rootInstall(this)); setCheck(autoStart, AppConfig.autoStart(this));
-        NowPlaying n = MediaCaptureEngine.get().current(); nowPlaying.setText((n.title.isEmpty() ? "暂无媒体" : n.title) + (n.artist.isEmpty() ? "" : "\n" + n.artist) + (n.album.isEmpty() ? "" : " · " + n.album) + "\n状态：" + (n.playing ? "播放中" : "暂停/空闲") + (MediaCaptureEngine.get().lastError().isEmpty() ? "" : "\n" + MediaCaptureEngine.get().lastError()));
+        String ip = NetUtil.localIpv4();
+        String token = AppConfig.token(this);
+        String url = "http://" + ip + ":" + AppConfig.port(this) + "/?token=" + token;
+        address.setText("0.0.0.0".equals(ip) ? "等待连接局域网" : url);
+        for (int i=0; i<6; i++) digits[i].setText(String.valueOf(token.charAt(i)));
+        if ("0.0.0.0".equals(ip)) { qr.setImageDrawable(null); lastUrl=""; return; }
+        if (!url.equals(lastUrl)) {
+            qr.setImageBitmap(QrBitmap.create(url, dp(248)));
+            lastUrl = url;
+        }
     }
-    private void setCheck(CheckBox b, boolean v) { if (b.isChecked() != v) b.setChecked(v); }
-    private void copyUrl() { String url = "http://" + NetUtil.localIpv4() + ":" + AppConfig.port(this) + "/?token=" + AppConfig.token(this); ((ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("CarBoxHub", url)); Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show(); }
-    private void updateQr(String url, String ip) {
-        if (qrView == null) return;
-        if ("0.0.0.0".equals(ip)) { qrView.setImageDrawable(null); qrHint.setText("等待车盒连接 Wi-Fi / 热点后生成二维码"); lastQrUrl = ""; return; }
-        qrHint.setText("二维码包含当前局域网地址和访问 Token · 点击二维码可放大"); if (url.equals(lastQrUrl)) return;
-        try { qrView.setImageBitmap(QrBitmap.create(url, dp(240))); lastQrUrl = url; } catch (Throwable t) { qrView.setImageDrawable(null); qrHint.setText("二维码生成失败：" + t.getMessage()); lastQrUrl = ""; }
-    }
-    private void showLargeQr() {
-        String ip = NetUtil.localIpv4(); if ("0.0.0.0".equals(ip)) { Toast.makeText(this, "车盒还没有可用的局域网 IP", Toast.LENGTH_SHORT).show(); return; }
+
+    private void showQr() {
+        String ip = NetUtil.localIpv4();
+        if ("0.0.0.0".equals(ip)) { toast("当前没有可用的局域网地址"); return; }
         String url = "http://" + ip + ":" + AppConfig.port(this) + "/?token=" + AppConfig.token(this);
-        int target = Math.max(240, (int)(Math.min(getResources().getDisplayMetrics().widthPixels, getResources().getDisplayMetrics().heightPixels) * 0.68f));
-        Dialog dialog = new Dialog(this); LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL); panel.setGravity(Gravity.CENTER); panel.setPadding(dp(18), dp(18), dp(18), dp(18)); panel.setBackgroundColor(Color.WHITE);
-        ImageView image = new ImageView(this); image.setImageBitmap(QrBitmap.create(url, target)); image.setAdjustViewBounds(true); image.setScaleType(ImageView.ScaleType.CENTER); panel.addView(image, new LinearLayout.LayoutParams(target, target));
-        TextView tip = text("手机连接同一局域网后扫码打开 CarBoxHub", 16, Color.rgb(15,23,42)); tip.setGravity(Gravity.CENTER); tip.setPadding(0, dp(8), 0, dp(4)); panel.addView(tip);
-        TextView address = text(url, 12, Color.rgb(71,85,105)); address.setGravity(Gravity.CENTER); panel.addView(address); panel.setOnClickListener(v -> dialog.dismiss());
-        dialog.setContentView(panel); dialog.setCanceledOnTouchOutside(true); dialog.show();
+        Dialog d = new Dialog(this);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER);
+        box.setPadding(dp(18),dp(18),dp(18),dp(18));
+        box.setBackgroundColor(Color.WHITE);
+        ImageView image = new ImageView(this);
+        int size = Math.max(dp(280), (int)(Math.min(getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels)*0.7f));
+        image.setImageBitmap(QrBitmap.create(url,size));
+        box.addView(image,new LinearLayout.LayoutParams(size,size));
+        TextView u = tv(url,12,Color.rgb(51,65,85)); u.setGravity(Gravity.CENTER); box.addView(u);
+        box.setOnClickListener(v -> d.dismiss());
+        d.setContentView(box); d.show();
     }
-    private void requestStorage() { if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE}, 200); else { Toast.makeText(this, "公共存储权限已可用", Toast.LENGTH_SHORT).show(); refresh(); } }
-    private void openUnknownSources() { if (Build.VERSION.SDK_INT >= 26) startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName()))); else startActivity(new Intent(Settings.ACTION_SECURITY_SETTINGS)); }
-    private TextView text(String s, int sp, int color) { TextView v = new TextView(this); v.setText(s); v.setTextSize(sp); v.setTextColor(color); v.setGravity(Gravity.START); return v; }
-    private Button button(String s) { Button b = new Button(this); b.setText(s); b.setAllCaps(false); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(50), 1); lp.setMargins(0,0,dp(10),dp(12)); b.setLayoutParams(lp); return b; }
-    private CheckBox check(String s) { CheckBox c = new CheckBox(this); c.setText(s); c.setTextColor(Color.WHITE); c.setTextSize(16); c.setPadding(0,dp(8),0,dp(8)); return c; }
-    private int dp(int x) { return Math.round(x * getResources().getDisplayMetrics().density); }
+
+    private void showSettings() {
+        Dialog d = new Dialog(this);
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20),dp(20),dp(20),dp(20));
+        box.setBackgroundColor(Color.rgb(7,13,25));
+        scroll.addView(box);
+        box.addView(tv("CarBoxHub 控制面板",22,Color.WHITE));
+        TextView hint = tv("长按首页标题可打开这里",13,Color.rgb(148,163,184)); hint.setPadding(0,dp(6),0,dp(12)); box.addView(hint);
+
+        Button reset = button("重置 6 位令牌"); reset.setOnClickListener(v -> { AppConfig.regenerateToken(this); refresh(); toast("令牌已更新"); }); box.addView(reset);
+        Button notif = button("通知使用权"); notif.setOnClickListener(v -> startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))); box.addView(notif);
+        Button unknown = button("安装未知应用"); unknown.setOnClickListener(v -> openUnknown()); box.addView(unknown);
+        Button storage = button("公共下载目录"); storage.setOnClickListener(v -> requestStorage()); box.addView(storage);
+
+        CheckBox media = check("启用：网易云媒体投送插件", AppConfig.neteaseEnabled(this));
+        media.setOnCheckedChangeListener((v,c) -> { AppConfig.setNeteaseEnabled(this,c); if(c) MediaCaptureEngine.get().start(this); else MediaCaptureEngine.get().stop(); }); box.addView(media);
+        CheckBox root = check("有 root 时优先静默安装 APK", AppConfig.rootInstall(this));
+        root.setOnCheckedChangeListener((v,c) -> AppConfig.setRootInstall(this,c)); box.addView(root);
+        CheckBox boot = check("开机自动启动 CarBoxHub", AppConfig.autoStart(this));
+        boot.setOnCheckedChangeListener((v,c) -> AppConfig.setAutoStart(this,c)); box.addView(boot);
+
+        boolean access = NeteaseMediaPlugin.hasNotificationAccess(this);
+        boolean install = Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls();
+        TextView state = tv("通知使用权："+(access?"已授权":"未授权")+"\nAPK 安装权限："+(install?"可用":"未允许")+"\n文件目录："+StorageUtil.uploadDir(this).getAbsolutePath(),14,Color.rgb(203,213,225));
+        state.setPadding(0,dp(12),0,0); box.addView(state);
+        d.setContentView(scroll); d.setOnDismissListener(x -> refresh()); d.show();
+    }
+
+    private void copyUrl() {
+        String ip=NetUtil.localIpv4(); if("0.0.0.0".equals(ip)){toast("当前没有可用地址");return;}
+        copy("CarBoxHub URL","http://"+ip+":"+AppConfig.port(this)+"/?token="+AppConfig.token(this)); toast("地址已复制");
+    }
+    private void copyToken(){ copy("CarBoxHub Token",AppConfig.token(this)); toast("令牌已复制"); }
+    private void copy(String label,String value){ ((ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText(label,value)); }
+    private void toast(String s){ Toast.makeText(this,s,Toast.LENGTH_SHORT).show(); }
+
+    private void requestStorage(){
+        if(Build.VERSION.SDK_INT>=23 && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)!=PackageManager.PERMISSION_GRANTED)
+            requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE,Manifest.permission.WRITE_EXTERNAL_STORAGE},200);
+        else toast("公共存储权限已可用");
+    }
+    private void openUnknown(){ if(Build.VERSION.SDK_INT>=26) startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:"+getPackageName()))); else toast("Android 8 以下一般无需单独开启"); }
+
+    private LinearLayout card(String label){
+        LinearLayout c=new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setPadding(dp(20),dp(18),dp(20),dp(18)); c.setBackground(cardBg());
+        TextView l=tv(label,14,Color.rgb(148,163,184)); l.setGravity(Gravity.CENTER); c.addView(l); return c;
+    }
+    private LinearLayout.LayoutParams lpTop(int top){ LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT); p.topMargin=dp(top); return p; }
+    private GradientDrawable cardBg(){ GradientDrawable g=new GradientDrawable(); g.setColor(Color.rgb(15,23,42)); g.setCornerRadius(dp(26)); g.setStroke(dp(1),Color.rgb(37,99,235)); return g; }
+    private GradientDrawable codeBg(){ GradientDrawable g=new GradientDrawable(); g.setColor(Color.rgb(241,245,249)); g.setCornerRadius(dp(18)); g.setStroke(dp(2),Color.rgb(191,219,254)); return g; }
+    private TextView tv(String s,int sp,int color){ TextView t=new TextView(this); t.setText(s); t.setTextSize(sp); t.setTextColor(color); return t; }
+    private Button button(String s){ Button b=new Button(this); b.setText(s); b.setAllCaps(false); return b; }
+    private CheckBox check(String s,boolean v){ CheckBox c=new CheckBox(this); c.setText(s); c.setTextColor(Color.WHITE); c.setChecked(v); return c; }
+    private int dp(int v){ return Math.round(getResources().getDisplayMetrics().density*v); }
 }
