@@ -13,6 +13,10 @@ android {
     namespace 'com.carboxhub.app'
     compileSdk 34
 
+    buildFeatures {
+        buildConfig true
+    }
+
     defaultConfig {
         applicationId 'com.carboxhub.app'
         minSdk 23
