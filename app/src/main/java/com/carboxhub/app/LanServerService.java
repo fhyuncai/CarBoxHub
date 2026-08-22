@@ -5,8 +5,10 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.IBinder;
@@ -16,6 +18,16 @@ public final class LanServerService extends Service {
     public static volatile boolean running = false;
     public static volatile boolean webRunning = false;
     private SimpleHttpServer server;
+    private boolean configReceiverRegistered;
+
+    private final BroadcastReceiver configReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (intent == null || !AppConfig.ACTION_CONFIG_CHANGED.equals(intent.getAction())) return;
+            String key = intent.getStringExtra(AppConfig.EXTRA_KEY);
+            if ("web_enabled".equals(key)) applyWebState();
+            updateNotification();
+        }
+    };
 
     public static void requestApplyWebState(Context context) {
         Intent i = new Intent(context, LanServerService.class).setAction(ACTION_APPLY_WEB_STATE);
@@ -25,6 +37,8 @@ public final class LanServerService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         ensureChannel();
+        registerReceiver(configReceiver, new IntentFilter(AppConfig.ACTION_CONFIG_CHANGED));
+        configReceiverRegistered = true;
         startForeground(7, notification());
         applyWebState();
         PluginRegistry.startEnabled(this);
@@ -43,6 +57,10 @@ public final class LanServerService extends Service {
         running = false;
         PluginRegistry.stopAll(this);
         stopServer();
+        if (configReceiverRegistered) {
+            try { unregisterReceiver(configReceiver); } catch (Throwable ignored) {}
+            configReceiverRegistered = false;
+        }
         super.onDestroy();
     }
 
