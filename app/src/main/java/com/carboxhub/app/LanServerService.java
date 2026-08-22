@@ -5,59 +5,89 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.IBinder;
 
 public final class LanServerService extends Service {
+    public static final String ACTION_APPLY_WEB_STATE = "com.carboxhub.app.action.APPLY_WEB_STATE";
     public static volatile boolean running = false;
+    public static volatile boolean webRunning = false;
     private SimpleHttpServer server;
+
+    public static void requestApplyWebState(Context context) {
+        Intent i = new Intent(context, LanServerService.class).setAction(ACTION_APPLY_WEB_STATE);
+        if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(i); else context.startService(i);
+    }
 
     @Override public void onCreate() {
         super.onCreate();
         ensureChannel();
         startForeground(7, notification());
-        startServer();
+        applyWebState();
         PluginRegistry.startEnabled(this);
         running = true;
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        if (server == null) startServer();
+        applyWebState();
         PluginRegistry.startEnabled(this);
         running = true;
+        updateNotification();
         return START_STICKY;
     }
 
     @Override public void onDestroy() {
         running = false;
         PluginRegistry.stopAll(this);
-        if (server != null) {
-            server.stop();
-            server = null;
-        }
+        stopServer();
         super.onDestroy();
     }
 
     @Override public IBinder onBind(Intent intent) { return null; }
 
-    private void startServer() {
+    private synchronized void applyWebState() {
+        if (AppConfig.webEnabled(this)) startServer(); else stopServer();
+    }
+
+    private synchronized void startServer() {
+        if (server != null) {
+            webRunning = true;
+            return;
+        }
         try {
             server = new SimpleHttpServer(getApplicationContext(), AppConfig.port(this));
             server.start();
+            webRunning = true;
         } catch (Throwable t) {
             server = null;
+            webRunning = false;
         }
+    }
+
+    private synchronized void stopServer() {
+        if (server != null) {
+            try { server.stop(); } catch (Throwable ignored) {}
+            server = null;
+        }
+        webRunning = false;
     }
 
     private void ensureChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel ch = new NotificationChannel("service", "CarBoxHub 服务", NotificationManager.IMPORTANCE_LOW);
-            ch.setDescription("CarBoxHub 局域网管理服务");
+            ch.setDescription("CarBoxHub 后台服务");
             ch.setLightColor(0xFF2563EB);
             ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(ch);
         }
+    }
+
+    private void updateNotification() {
+        try {
+            ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(7, notification());
+        } catch (Throwable ignored) {}
     }
 
     private Notification notification() {
@@ -68,7 +98,9 @@ public final class LanServerService extends Service {
         if (Build.VERSION.SDK_INT >= 23) f |= PendingIntent.FLAG_IMMUTABLE;
         PendingIntent pi = PendingIntent.getActivity(this, 7, i, f);
 
-        String text = "http://" + NetUtil.localIpv4() + ":" + AppConfig.port(this);
+        String text = AppConfig.webEnabled(this)
+                ? "Web：http://" + NetUtil.localIpv4() + ":" + AppConfig.port(this)
+                : "Web 管理服务已关闭";
         Notification.Builder b = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(this, "service")
                 : new Notification.Builder(this);
