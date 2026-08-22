@@ -9,6 +9,7 @@ public final class AppConfig {
     private static final String PREF = "carboxhub";
     private static final String K_TOKEN = "token";
     private static final String K_PORT = "port";
+    private static final String K_WEB_ENABLED = "web_enabled";
     private static final String K_ROOT_INSTALL = "root_install";
     private static final String K_AUTOSTART = "autostart";
     private static final String K_NETEASE = "plugin_netease";
@@ -36,6 +37,8 @@ public final class AppConfig {
     }
 
     public static int port(Context c) { return p(c).getInt(K_PORT, 8899); }
+    public static boolean webEnabled(Context c) { return p(c).getBoolean(K_WEB_ENABLED, true); }
+    public static void setWebEnabled(Context c, boolean v) { p(c).edit().putBoolean(K_WEB_ENABLED, v).apply(); }
     public static boolean rootInstall(Context c) { return p(c).getBoolean(K_ROOT_INSTALL, false); }
     public static void setRootInstall(Context c, boolean v) { p(c).edit().putBoolean(K_ROOT_INSTALL, v).apply(); }
     public static boolean autoStart(Context c) { return p(c).getBoolean(K_AUTOSTART, true); }
