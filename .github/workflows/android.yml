@@ -5,7 +5,6 @@ on:
   pull_request:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]
 
 permissions:
   contents: write
@@ -34,13 +33,14 @@ jobs:
         run: |
           VERSION=$(grep "versionName '" app/build.gradle | sed -E "s/.*versionName '([^']+)'.*/\1/")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Prepare release signing files
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           if [ -z "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ] || [ -z "${{ secrets.RELEASE_STORE_PASSWORD }}" ] || [ -z "${{ secrets.RELEASE_KEY_ALIAS }}" ] || [ -z "${{ secrets.RELEASE_KEY_PASSWORD }}" ]; then
-            echo "::error::Missing signing secrets"
+            echo "::error::Missing signing secrets: RELEASE_KEYSTORE_BASE64, RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD"
             exit 1
           fi
           mkdir -p keystore
@@ -53,11 +53,11 @@ jobs:
             > keystore.properties
 
       - name: Build signed Release APK
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name != 'pull_request'
         run: gradle :app:assembleRelease --stacktrace
 
-      - name: Build unsigned CI APK
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+      - name: Build unsigned PR check APK
+        if: github.event_name == 'pull_request'
         run: gradle :app:assembleRelease -PciUnsignedRelease=true --stacktrace
 
       - name: Package APK
@@ -65,11 +65,14 @@ jobs:
         shell: bash
         run: |
           APK=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
-          test -n "$APK"
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            OUT="CarBoxHub-v${{ steps.version.outputs.version }}.apk"
-          else
+          if [ -z "$APK" ]; then
+            echo "::error::Release APK not found"
+            exit 1
+          fi
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
             OUT="CarBoxHub-v${{ steps.version.outputs.version }}-unsigned.apk"
+          else
+            OUT="CarBoxHub-v${{ steps.version.outputs.version }}.apk"
           fi
           cp "$APK" "$OUT"
           echo "artifact_name=$OUT" >> "$GITHUB_OUTPUT"
@@ -82,9 +85,12 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: CarBoxHub v${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
           files: ${{ steps.pack.outputs.artifact_name }}
           generate_release_notes: true
           fail_on_unmatched_files: true
