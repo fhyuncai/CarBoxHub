@@ -2,7 +2,10 @@ package com.carboxhub.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -22,15 +25,39 @@ import android.widget.Toast;
 
 public final class ConfigActivity extends Activity {
     private LinearLayout content;
+    private boolean configReceiverRegistered;
+
+    private final BroadcastReceiver configReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (intent == null || !AppConfig.ACTION_CONFIG_CHANGED.equals(intent.getAction())) return;
+            if (content != null) rebuildRows();
+        }
+    };
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         setContentView(buildUi());
     }
 
+    @Override protected void onStart() {
+        super.onStart();
+        if (!configReceiverRegistered) {
+            registerReceiver(configReceiver, new IntentFilter(AppConfig.ACTION_CONFIG_CHANGED));
+            configReceiverRegistered = true;
+        }
+    }
+
     @Override protected void onResume() {
         super.onResume();
         if (content != null) rebuildRows();
+    }
+
+    @Override protected void onStop() {
+        if (configReceiverRegistered) {
+            try { unregisterReceiver(configReceiver); } catch (Throwable ignored) {}
+            configReceiverRegistered = false;
+        }
+        super.onStop();
     }
 
     private View buildUi() {
@@ -100,6 +127,18 @@ public final class ConfigActivity extends Activity {
                 v -> requestStorage()
         );
 
+        section("Web 管理");
+        toggleRow(
+                "Web 管理服务",
+                "控制局域网管理页面；关闭后首屏只显示开启 Web 服务按钮",
+                AppConfig.webEnabled(this),
+                checked -> {
+                    AppConfig.setWebEnabled(this, checked);
+                    LanServerService.requestApplyWebState(this);
+                    toast(checked ? "Web 服务已开启" : "Web 服务已关闭");
+                }
+        );
+
         section("访问与安装");
         actionRow(
                 "访问令牌",
@@ -108,7 +147,6 @@ public final class ConfigActivity extends Activity {
                 v -> {
                     AppConfig.regenerateToken(this);
                     toast("已生成新的 6 位令牌");
-                    rebuildRows();
                 }
         );
 
@@ -132,7 +170,7 @@ public final class ConfigActivity extends Activity {
 
         toggleRow(
                 "开机自动启动",
-                "车盒启动后自动恢复局域网管理服务",
+                "车盒启动后自动恢复 CarBoxHub 后台服务",
                 AppConfig.autoStart(this),
                 checked -> AppConfig.setAutoStart(this, checked)
         );
@@ -147,12 +185,14 @@ public final class ConfigActivity extends Activity {
         );
         actionRow(
                 "导出桥接 APK",
-                "把检测到的 Car Link / ZLink / TLink 安装包导出到 Web 文件目录",
+                "把检测到的 Car Link / ZLink / TLink 安装包导出到文件目录",
                 "导出",
                 v -> exportBridgeApk()
         );
 
         section("状态");
+        String webState = !AppConfig.webEnabled(this) ? "已关闭" : (LanServerService.webRunning ? "运行中" : "正在启动");
+        infoRow("Web 服务", webState);
         String rootState = AppConfig.rootInstall(this) ? (RootShell.isAvailable() ? "可用" : "无 / 未授权") : "未启用";
         infoRow("Root", rootState);
         infoRow("文件目录", StorageUtil.uploadDir(this).getAbsolutePath());
@@ -168,7 +208,7 @@ public final class ConfigActivity extends Activity {
             BridgeDiagnostics.Result result = BridgeDiagnostics.capture(getApplicationContext());
             runOnUiThread(() -> {
                 if (result.ok && result.file != null) {
-                    toast("已生成：" + result.file.getName() + "，可从 Web 文件管理下载");
+                    toast("已生成：" + result.file.getName() + "，可在 Web 服务开启后下载");
                 } else {
                     toast("诊断失败：" + result.message);
                 }
@@ -182,7 +222,7 @@ public final class ConfigActivity extends Activity {
             BridgeDiagnostics.Result result = BridgeDiagnostics.exportPrimaryApk(getApplicationContext());
             runOnUiThread(() -> {
                 if (result.ok && result.file != null) {
-                    toast("已导出：" + result.file.getName() + "，可从 Web 文件管理下载");
+                    toast("已导出：" + result.file.getName() + "，可在 Web 服务开启后下载");
                 } else {
                     toast(result.message);
                 }
