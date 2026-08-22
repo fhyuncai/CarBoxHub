@@ -20,6 +20,7 @@ public final class NeteaseMediaPlugin implements Plugin {
                 "\"notificationAccess\":" + access + "," +
                 "\"engineStarted\":" + MediaCaptureEngine.get().isStarted() + "," +
                 "\"lastError\":" + JsonUtil.q(MediaCaptureEngine.get().lastError()) + "," +
+                "\"artworkDataUrl\":" + JsonUtil.q(MediaCaptureEngine.get().artworkDataUrl()) + "," +
                 "\"nowPlaying\":" + n.toJson() +
                 "}";
     }
