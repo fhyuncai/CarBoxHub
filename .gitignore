@@ -1,0 +1,11 @@
+.gradle/
+.idea/
+local.properties
+**/build/
+*.iml
+
+# CarBoxHub release signing material. Keep these out of Git/public repositories.
+keystore/
+keystore.properties
+*.jks
+*.keystore
