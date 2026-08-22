@@ -17,13 +17,30 @@ public final class LanServerService extends Service {
     @Override public void onDestroy() { running = false; PluginRegistry.stopAll(this); if (server != null) { server.stop(); server = null; } super.onDestroy(); }
     @Override public IBinder onBind(Intent intent) { return null; }
     private void startServer() { try { server = new SimpleHttpServer(getApplicationContext(), AppConfig.port(this)); server.start(); } catch (Throwable t) { server = null; } }
-    private void ensureChannel() { if (Build.VERSION.SDK_INT >= 26) { NotificationChannel ch = new NotificationChannel("service", "CarBoxHub 服务", NotificationManager.IMPORTANCE_LOW); ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(ch); } }
+    private void ensureChannel() {
+        if (Build.VERSION.SDK_INT >= 26) {
+            NotificationChannel ch = new NotificationChannel("service", "CarBoxHub 服务", NotificationManager.IMPORTANCE_LOW);
+            ch.setDescription("CarBoxHub 局域网管理服务");
+            ch.setLightColor(0xFF2563EB);
+            ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(ch);
+        }
+    }
     private Notification notification() {
         Intent i = new Intent(this, MainActivity.class);
-        int f = PendingIntent.FLAG_UPDATE_CURRENT; if (Build.VERSION.SDK_INT >= 23) f |= PendingIntent.FLAG_IMMUTABLE;
+        int f = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= 23) f |= PendingIntent.FLAG_IMMUTABLE;
         PendingIntent pi = PendingIntent.getActivity(this, 7, i, f);
         String text = "http://" + NetUtil.localIpv4() + ":" + AppConfig.port(this);
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, "service") : new Notification.Builder(this);
-        return b.setSmallIcon(R.drawable.ic_stat_carbox).setContentTitle("CarBoxHub 正在运行").setContentText(text).setContentIntent(pi).setOngoing(true).build();
+        return b
+                .setSmallIcon(R.drawable.ic_stat_carbox)
+                .setColor(0xFF2563EB)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .setShowWhen(false)
+                .setContentTitle("CarBoxHub 正在运行")
+                .setContentText(text)
+                .setContentIntent(pi)
+                .setOngoing(true)
+                .build();
     }
 }
