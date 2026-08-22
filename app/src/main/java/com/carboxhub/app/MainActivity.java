@@ -30,6 +30,7 @@ public final class MainActivity extends Activity {
     private ImageView qr;
     private final TextView[] digits = new TextView[6];
     private String lastUrl = "";
+    private boolean renderedWebEnabled;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
@@ -69,6 +70,11 @@ public final class MainActivity extends Activity {
         int hintSp = spPx(clampPx((int) (h * 0.026f), dp(9), dp(12)));
         int qrSide = clampPx((int) (h * 0.37f), dp(126), dp(198));
 
+        renderedWebEnabled = AppConfig.webEnabled(this);
+        address = null;
+        qr = null;
+        lastUrl = "";
+
         FrameLayout shell = new FrameLayout(this);
         shell.setBackgroundColor(Color.rgb(64, 66, 70));
 
@@ -85,8 +91,15 @@ public final class MainActivity extends Activity {
         title.setEllipsize(TextUtils.TruncateAt.END);
         root.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        addSettingsButton(shell);
+
         Space gap = new Space(this);
         root.addView(gap, new LinearLayout.LayoutParams(1, dp(6)));
+
+        if (!renderedWebEnabled) {
+            buildWebDisabledState(root, titleSp, labelSp, hintSp);
+            return shell;
+        }
 
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.HORIZONTAL);
@@ -169,6 +182,35 @@ public final class MainActivity extends Activity {
         qrHint.setPadding(0, dp(8), 0, 0);
         right.addView(qrHint);
 
+        return shell;
+    }
+
+    private void buildWebDisabledState(LinearLayout root, int titleSp, int labelSp, int hintSp) {
+        LinearLayout center = new LinearLayout(this);
+        center.setOrientation(LinearLayout.VERTICAL);
+        center.setGravity(Gravity.CENTER);
+        root.addView(center, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        TextView state = tv("Web 管理服务已关闭", Math.max(labelSp + 4, titleSp - 4), Color.WHITE);
+        state.setTypeface(Typeface.DEFAULT_BOLD);
+        state.setGravity(Gravity.CENTER);
+        center.addView(state);
+
+        TextView hint = tv("局域网管理页面当前不可访问", hintSp + 1, Color.rgb(205, 207, 212));
+        hint.setGravity(Gravity.CENTER);
+        hint.setPadding(0, dp(7), 0, dp(18));
+        center.addView(hint);
+
+        TextView enable = tv("开启 Web 服务", labelSp + 2, Color.WHITE);
+        enable.setTypeface(Typeface.DEFAULT_BOLD);
+        enable.setGravity(Gravity.CENTER);
+        enable.setPadding(dp(28), dp(11), dp(28), dp(11));
+        enable.setBackground(primaryButtonBg());
+        enable.setOnClickListener(v -> enableWebService());
+        center.addView(enable, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    private void addSettingsButton(FrameLayout shell) {
         ImageButton settings = new ImageButton(this);
         settings.setImageResource(R.drawable.ic_settings_gear);
         settings.setBackgroundColor(Color.TRANSPARENT);
@@ -179,11 +221,24 @@ public final class MainActivity extends Activity {
         settingsLp.leftMargin = dp(8);
         settingsLp.topMargin = dp(4);
         shell.addView(settings, settingsLp);
+    }
 
-        return shell;
+    private void enableWebService() {
+        AppConfig.setWebEnabled(this, true);
+        LanServerService.requestApplyWebState(this);
+        setContentView(buildUi());
+        refresh();
+        toast("Web 服务已开启");
     }
 
     private void refresh() {
+        boolean enabled = AppConfig.webEnabled(this);
+        if (enabled != renderedWebEnabled) {
+            setContentView(buildUi());
+            if (!enabled) return;
+        }
+        if (!enabled || address == null || qr == null) return;
+
         String ip = NetUtil.localIpv4();
         String token = AppConfig.token(this);
         String baseUrl = "http://" + ip + ":" + AppConfig.port(this);
@@ -203,6 +258,10 @@ public final class MainActivity extends Activity {
     }
 
     private void showQr() {
+        if (!AppConfig.webEnabled(this)) {
+            toast("请先开启 Web 服务");
+            return;
+        }
         String ip = NetUtil.localIpv4();
         if ("0.0.0.0".equals(ip)) {
             toast("当前没有可用的局域网地址");
@@ -228,6 +287,10 @@ public final class MainActivity extends Activity {
     }
 
     private void copyBaseUrl() {
+        if (!AppConfig.webEnabled(this)) {
+            toast("请先开启 Web 服务");
+            return;
+        }
         String ip = NetUtil.localIpv4();
         if ("0.0.0.0".equals(ip)) {
             toast("当前没有可用地址");
@@ -255,6 +318,13 @@ public final class MainActivity extends Activity {
         g.setColor(Color.rgb(146, 146, 146));
         g.setCornerRadius(dp(4));
         g.setStroke(dp(1), Color.rgb(196, 196, 196));
+        return g;
+    }
+
+    private GradientDrawable primaryButtonBg() {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(Color.rgb(53, 112, 230));
+        g.setCornerRadius(dp(22));
         return g;
     }
 
