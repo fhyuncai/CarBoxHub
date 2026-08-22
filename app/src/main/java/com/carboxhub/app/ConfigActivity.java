@@ -2,7 +2,10 @@ package com.carboxhub.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -22,15 +25,39 @@ import android.widget.Toast;
 
 public final class ConfigActivity extends Activity {
     private LinearLayout content;
+    private boolean configReceiverRegistered;
+
+    private final BroadcastReceiver configReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (intent == null || !AppConfig.ACTION_CONFIG_CHANGED.equals(intent.getAction())) return;
+            if (content != null) rebuildRows();
+        }
+    };
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         setContentView(buildUi());
     }
 
+    @Override protected void onStart() {
+        super.onStart();
+        if (!configReceiverRegistered) {
+            registerReceiver(configReceiver, new IntentFilter(AppConfig.ACTION_CONFIG_CHANGED));
+            configReceiverRegistered = true;
+        }
+    }
+
     @Override protected void onResume() {
         super.onResume();
         if (content != null) rebuildRows();
+    }
+
+    @Override protected void onStop() {
+        if (configReceiverRegistered) {
+            try { unregisterReceiver(configReceiver); } catch (Throwable ignored) {}
+            configReceiverRegistered = false;
+        }
+        super.onStop();
     }
 
     private View buildUi() {
@@ -120,7 +147,6 @@ public final class ConfigActivity extends Activity {
                 v -> {
                     AppConfig.regenerateToken(this);
                     toast("已生成新的 6 位令牌");
-                    rebuildRows();
                 }
         );
 
