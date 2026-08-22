@@ -45,12 +45,12 @@ jobs:
           fi
           mkdir -p keystore
           echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > keystore/CarBoxHub-release.jks
-          cat > keystore.properties <<SIGN
-storeFile=keystore/CarBoxHub-release.jks
-storePassword=${{ secrets.RELEASE_STORE_PASSWORD }}
-keyAlias=${{ secrets.RELEASE_KEY_ALIAS }}
-keyPassword=${{ secrets.RELEASE_KEY_PASSWORD }}
-SIGN
+          printf '%s\n' \
+            'storeFile=keystore/CarBoxHub-release.jks' \
+            'storePassword=${{ secrets.RELEASE_STORE_PASSWORD }}' \
+            'keyAlias=${{ secrets.RELEASE_KEY_ALIAS }}' \
+            'keyPassword=${{ secrets.RELEASE_KEY_PASSWORD }}' \
+            > keystore.properties
 
       - name: Build signed Release APK
         if: startsWith(github.ref, 'refs/tags/v')
